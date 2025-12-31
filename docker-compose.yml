@@ -1,0 +1,99 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentcraft-postgres
+    ports:
+      - "5432:5432"
+    environment: 
+      POSTGRES_USER: agentcraft
+      POSTGRES_PASSWORD:  dev_password
+      POSTGRES_DB: agentcraft_db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init. sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentcraft"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentcraft-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: agentcraft-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval:  5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - agentcraft-network
+
+  backend:
+    build: 
+      context: . 
+      dockerfile: docker/Dockerfile. backend. dev
+    container_name: agentcraft-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./knowledge:/knowledge
+    environment:
+      DATABASE_URL: postgresql://agentcraft:dev_password@postgres:5432/agentcraft_db
+      REDIS_URL: redis://redis:6379/0
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      DEBUG: "true"
+      ENVIRONMENT: development
+      PYTHONUNBUFFERED: 1
+    depends_on: 
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - agentcraft-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend.dev
+    container_name: agentcraft-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NODE_ENV: development
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - agentcraft-network
+
+networks:
+  agentcraft-network:
+    driver: bridge
+
+volumes:
+  postgres-data: 
+  redis-data:
